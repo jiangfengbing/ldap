@@ -3,7 +3,7 @@ package ldap
 import (
 	"log"
 
-	"github.com/nmcclain/asn1-ber"
+	"github.com/jiangfengbing/asn1-ber"
 )
 
 // debbuging type

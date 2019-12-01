@@ -64,7 +64,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nmcclain/asn1-ber"
+	"github.com/jiangfengbing/asn1-ber"
 )
 
 const (
