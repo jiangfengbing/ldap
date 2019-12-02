@@ -155,13 +155,13 @@ func TestModifyDN(t *testing.T) {
 type modifyTestHandler struct {
 }
 
-func (h modifyTestHandler) Bind(bindDN, bindSimplePw string, conn net.Conn) (LDAPResultCode, error) {
+func (h modifyTestHandler) Bind(bindDN, bindSimplePw string, c *Context) (LDAPResultCode, error) {
 	if bindDN == "" && bindSimplePw == "" {
 		return LDAPResultSuccess, nil
 	}
 	return LDAPResultInvalidCredentials, nil
 }
-func (h modifyTestHandler) Add(boundDN string, req AddRequest, conn net.Conn) (LDAPResultCode, error) {
+func (h modifyTestHandler) Add(boundDN string, req AddRequest, c *Context) (LDAPResultCode, error) {
 	// only succeed on expected contents of add.ldif:
 	if len(req.attributes) == 5 && req.dn == "cn=Barbara Jensen,dc=example,dc=com" &&
 		req.attributes[2].attrType == "sn" && len(req.attributes[2].attrVals) == 1 &&
@@ -170,14 +170,14 @@ func (h modifyTestHandler) Add(boundDN string, req AddRequest, conn net.Conn) (L
 	}
 	return LDAPResultInsufficientAccessRights, nil
 }
-func (h modifyTestHandler) Delete(boundDN, deleteDN string, conn net.Conn) (LDAPResultCode, error) {
+func (h modifyTestHandler) Delete(boundDN, deleteDN string, c *Context) (LDAPResultCode, error) {
 	// only succeed on expected deleteDN
 	if deleteDN == "cn=Delete Me,dc=example,dc=com" {
 		return LDAPResultSuccess, nil
 	}
 	return LDAPResultInsufficientAccessRights, nil
 }
-func (h modifyTestHandler) Modify(boundDN string, req ModifyRequest, conn net.Conn) (LDAPResultCode, error) {
+func (h modifyTestHandler) Modify(boundDN string, req ModifyRequest, c *Context) (LDAPResultCode, error) {
 	// only succeed on expected contents of modify.ldif:
 	if req.Dn == "cn=testy,dc=example,dc=com" && len(req.AddAttributes) == 1 &&
 		len(req.DeleteAttributes) == 3 && len(req.ReplaceAttributes) == 2 &&

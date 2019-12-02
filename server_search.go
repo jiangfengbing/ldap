@@ -3,13 +3,12 @@ package ldap
 import (
 	"errors"
 	"fmt"
-	"net"
 	"strings"
 
 	ber "github.com/jiangfengbing/asn1-ber"
 )
 
-func HandleSearchRequest(req *ber.Packet, controls *[]Control, messageID uint64, boundDN string, server *Server, conn net.Conn) (resultErr error) {
+func HandleSearchRequest(req *ber.Packet, controls *[]Control, messageID uint64, boundDN string, server *Server, c *Context) (resultErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			resultErr = NewError(LDAPResultOperationsError, fmt.Errorf("Search function panic: %s", r))
@@ -31,7 +30,7 @@ func HandleSearchRequest(req *ber.Packet, controls *[]Control, messageID uint64,
 		fnNames = append(fnNames, k)
 	}
 	fn := routeFunc(searchReq.BaseDN, fnNames)
-	searchResp, err := server.SearchFns[fn].Search(boundDN, searchReq, conn)
+	searchResp, err := server.SearchFns[fn].Search(boundDN, searchReq, c)
 	if err != nil {
 		return NewError(searchResp.ResultCode, err)
 	}
@@ -91,7 +90,7 @@ func HandleSearchRequest(req *ber.Packet, controls *[]Control, messageID uint64,
 
 		// respond
 		responsePacket := encodeSearchResponse(messageID, searchReq, entry)
-		if err = sendPacket(conn, responsePacket); err != nil {
+		if err = sendPacket(c.conn, responsePacket); err != nil {
 			return NewError(LDAPResultOperationsError, err)
 		}
 	}

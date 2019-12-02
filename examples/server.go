@@ -3,10 +3,8 @@
 package main
 
 import (
+	"github.com/jiangfengbing/ldap"
 	"log"
-	"net"
-
-	"github.com/nmcclain/ldap"
 )
 
 /////////////
@@ -38,7 +36,7 @@ type ldapHandler struct {
 }
 
 ///////////// Allow anonymous binds only
-func (h ldapHandler) Bind(bindDN, bindSimplePw string, conn net.Conn) (ldap.LDAPResultCode, error) {
+func (h ldapHandler) Bind(bindDN, bindSimplePw string, c *ldap.Context) (ldap.LDAPResultCode, error) {
 	if bindDN == "" && bindSimplePw == "" {
 		return ldap.LDAPResultSuccess, nil
 	}
@@ -46,7 +44,7 @@ func (h ldapHandler) Bind(bindDN, bindSimplePw string, conn net.Conn) (ldap.LDAP
 }
 
 ///////////// Return some hardcoded search results - we'll respond to any baseDN for testing
-func (h ldapHandler) Search(boundDN string, searchReq ldap.SearchRequest, conn net.Conn) (ldap.ServerSearchResult, error) {
+func (h ldapHandler) Search(boundDN string, searchReq ldap.SearchRequest, c *ldap.Context) (ldap.ServerSearchResult, error) {
 	entries := []*ldap.Entry{
 		&ldap.Entry{"cn=ned," + searchReq.BaseDN, []*ldap.EntryAttribute{
 			&ldap.EntryAttribute{"cn", []string{"ned"}},

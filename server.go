@@ -11,38 +11,59 @@ import (
 	"github.com/jiangfengbing/asn1-ber"
 )
 
+type Context struct {
+	conn  net.Conn
+	store map[string]interface{}
+}
+
+func (c *Context) Close() error {
+	return c.conn.Close()
+}
+
+func (c *Context) Put(key string, val interface{}) {
+	c.store[key] = val
+}
+
+func (c *Context) Get(key string) interface{} {
+	return c.store[key]
+}
+
+func (c *Context) Delete(key string) {
+	delete(c.store, key)
+}
+
 type Binder interface {
-	Bind(bindDN, bindSimplePw string, conn net.Conn) (LDAPResultCode, error)
+	Bind(bindDN, bindSimplePw string, c *Context) (LDAPResultCode, error)
 }
 type Searcher interface {
-	Search(boundDN string, req SearchRequest, conn net.Conn) (ServerSearchResult, error)
+	Search(boundDN string, req SearchRequest, c *Context) (ServerSearchResult, error)
 }
 type Adder interface {
-	Add(boundDN string, req AddRequest, conn net.Conn) (LDAPResultCode, error)
+	Add(boundDN string, req AddRequest, c *Context) (LDAPResultCode, error)
 }
 type Modifier interface {
-	Modify(boundDN string, req ModifyRequest, conn net.Conn) (LDAPResultCode, error)
+	Modify(boundDN string, req ModifyRequest, c *Context) (LDAPResultCode, error)
 }
 type Deleter interface {
-	Delete(boundDN, deleteDN string, conn net.Conn) (LDAPResultCode, error)
+	Delete(boundDN, deleteDN string, c *Context) (LDAPResultCode, error)
 }
 type ModifyDNr interface {
-	ModifyDN(boundDN string, req ModifyDNRequest, conn net.Conn) (LDAPResultCode, error)
+	ModifyDN(boundDN string, req ModifyDNRequest, c *Context) (LDAPResultCode, error)
 }
 type Comparer interface {
-	Compare(boundDN string, req CompareRequest, conn net.Conn) (LDAPResultCode, error)
+	Compare(boundDN string, req CompareRequest, c *Context) (LDAPResultCode, error)
 }
 type Abandoner interface {
-	Abandon(boundDN string, conn net.Conn) error
+	Abandon(boundDN string, c *Context) error
 }
 type Extender interface {
-	Extended(boundDN string, req ExtendedRequest, conn net.Conn) (LDAPResultCode, error)
+	Extended(boundDN string, req ExtendedRequest, c *Context) (LDAPResultCode, error)
 }
 type Unbinder interface {
-	Unbind(boundDN string, conn net.Conn) (LDAPResultCode, error)
+	Unbind(boundDN string, c *Context) (LDAPResultCode, error)
 }
 type Closer interface {
-	Close(boundDN string, conn net.Conn) error
+	Close(boundDN string, c *Context) error
 }
 
 //
@@ -212,7 +233,8 @@ listener:
 		select {
 		case c := <-newConn:
 			server.Stats.countConns(1)
-			go server.handleConnection(c)
+
+			go server.handleConnection(server.newContext(c))
 		case <-server.Quit:
 			ln.Close()
 			break listener
@@ -221,14 +243,21 @@ listener:
 	return nil
 }
 
+func (server *Server) newContext(conn net.Conn) *Context {
+	return &Context{
+		conn:  conn,
+		store: make(map[string]interface{}),
+	}
+}
+
 //
-func (server *Server) handleConnection(conn net.Conn) {
+func (server *Server) handleConnection(c *Context) {
 	boundDN := "" // "" == anonymous
 
 handler:
 	for {
 		// read incoming LDAP packet
-		packet, err := ber.ReadPacket(conn)
+		packet, err := ber.ReadPacket(c.conn)
 		if err == io.EOF { // Client closed connection
 			break
 		} else if err != nil {
@@ -267,7 +296,7 @@ handler:
 		switch req.Tag { // ldap op code
 		default:
 			responsePacket := encodeLDAPResponse(messageID, ApplicationAddResponse, LDAPResultOperationsError, "Unsupported operation: add")
-			if err = sendPacket(conn, responsePacket); err != nil {
+			if err = sendPacket(c.conn, responsePacket); err != nil {
 				log.Printf("sendPacket error %s", err.Error())
 			}
 			log.Printf("Unhandled operation: %s [%d]", ApplicationMap[req.Tag], req.Tag)
@@ -275,7 +304,7 @@ handler:
 
 		case ApplicationBindRequest:
 			server.Stats.countBinds(1)
-			ldapResultCode := HandleBindRequest(req, server.BindFns, conn)
+			ldapResultCode := HandleBindRequest(req, server.BindFns, c)
 			if ldapResultCode == LDAPResultSuccess {
 				boundDN, ok = req.Children[1].Value.(string)
 				if !ok {
@@ -284,22 +313,22 @@ handler:
 				}
 			}
 			responsePacket := encodeBindResponse(messageID, ldapResultCode)
-			if err = sendPacket(conn, responsePacket); err != nil {
+			if err = sendPacket(c.conn, responsePacket); err != nil {
 				log.Printf("sendPacket error %s", err.Error())
 				break handler
 			}
 		case ApplicationSearchRequest:
 			server.Stats.countSearches(1)
-			if err := HandleSearchRequest(req, &controls, messageID, boundDN, server, conn); err != nil {
+			if err := HandleSearchRequest(req, &controls, messageID, boundDN, server, c); err != nil {
 				log.Printf("handleSearchRequest error %s", err.Error()) // TODO: make this more testable/better err handling - stop using log, stop using breaks?
 				e := err.(*Error)
-				if err = sendPacket(conn, encodeSearchDone(messageID, e.ResultCode)); err != nil {
+				if err = sendPacket(c.conn, encodeSearchDone(messageID, e.ResultCode)); err != nil {
 					log.Printf("sendPacket error %s", err.Error())
 					break handler
 				}
 				break handler
 			} else {
-				if err = sendPacket(conn, encodeSearchDone(messageID, LDAPResultSuccess)); err != nil {
+				if err = sendPacket(c.conn, encodeSearchDone(messageID, LDAPResultSuccess)); err != nil {
 					log.Printf("sendPacket error %s", err.Error())
 					break handler
 				}
@@ -308,59 +337,59 @@ handler:
 			server.Stats.countUnbinds(1)
 			break handler // simply disconnect
 		case ApplicationExtendedRequest:
-			ldapResultCode := HandleExtendedRequest(req, boundDN, server.ExtendedFns, conn)
+			ldapResultCode := HandleExtendedRequest(req, boundDN, server.ExtendedFns, c)
 			responsePacket := encodeLDAPResponse(messageID, ApplicationExtendedResponse, ldapResultCode, LDAPResultCodeMap[ldapResultCode])
-			if err = sendPacket(conn, responsePacket); err != nil {
+			if err = sendPacket(c.conn, responsePacket); err != nil {
 				log.Printf("sendPacket error %s", err.Error())
 				break handler
 			}
 		case ApplicationAbandonRequest:
-			HandleAbandonRequest(req, boundDN, server.AbandonFns, conn)
+			HandleAbandonRequest(req, boundDN, server.AbandonFns, c)
 			break handler
 
 		case ApplicationAddRequest:
-			ldapResultCode := HandleAddRequest(req, boundDN, server.AddFns, conn)
+			ldapResultCode := HandleAddRequest(req, boundDN, server.AddFns, c)
 			responsePacket := encodeLDAPResponse(messageID, ApplicationAddResponse, ldapResultCode, LDAPResultCodeMap[ldapResultCode])
-			if err = sendPacket(conn, responsePacket); err != nil {
+			if err = sendPacket(c.conn, responsePacket); err != nil {
 				log.Printf("sendPacket error %s", err.Error())
 				break handler
 			}
 		case ApplicationModifyRequest:
-			ldapResultCode := HandleModifyRequest(req, boundDN, server.ModifyFns, conn)
+			ldapResultCode := HandleModifyRequest(req, boundDN, server.ModifyFns, c)
 			responsePacket := encodeLDAPResponse(messageID, ApplicationModifyResponse, ldapResultCode, LDAPResultCodeMap[ldapResultCode])
-			if err = sendPacket(conn, responsePacket); err != nil {
+			if err = sendPacket(c.conn, responsePacket); err != nil {
 				log.Printf("sendPacket error %s", err.Error())
 				break handler
 			}
 		case ApplicationDelRequest:
-			ldapResultCode := HandleDeleteRequest(req, boundDN, server.DeleteFns, conn)
+			ldapResultCode := HandleDeleteRequest(req, boundDN, server.DeleteFns, c)
 			responsePacket := encodeLDAPResponse(messageID, ApplicationDelResponse, ldapResultCode, LDAPResultCodeMap[ldapResultCode])
-			if err = sendPacket(conn, responsePacket); err != nil {
+			if err = sendPacket(c.conn, responsePacket); err != nil {
 				log.Printf("sendPacket error %s", err.Error())
 				break handler
 			}
 		case ApplicationModifyDNRequest:
-			ldapResultCode := HandleModifyDNRequest(req, boundDN, server.ModifyDNFns, conn)
+			ldapResultCode := HandleModifyDNRequest(req, boundDN, server.ModifyDNFns, c)
 			responsePacket := encodeLDAPResponse(messageID, ApplicationModifyDNResponse, ldapResultCode, LDAPResultCodeMap[ldapResultCode])
-			if err = sendPacket(conn, responsePacket); err != nil {
+			if err = sendPacket(c.conn, responsePacket); err != nil {
 				log.Printf("sendPacket error %s", err.Error())
 				break handler
 			}
 		case ApplicationCompareRequest:
-			ldapResultCode := HandleCompareRequest(req, boundDN, server.CompareFns, conn)
+			ldapResultCode := HandleCompareRequest(req, boundDN, server.CompareFns, c)
 			responsePacket := encodeLDAPResponse(messageID, ApplicationCompareResponse, ldapResultCode, LDAPResultCodeMap[ldapResultCode])
-			if err = sendPacket(conn, responsePacket); err != nil {
+			if err = sendPacket(c.conn, responsePacket); err != nil {
 				log.Printf("sendPacket error %s", err.Error())
 				break handler
 			}
 		}
 	}
 
-	for _, c := range server.CloseFns {
-		c.Close(boundDN, conn)
+	for _, closeFn := range server.CloseFns {
+		closeFn.Close(boundDN, c)
 	}
 
-	conn.Close()
+	c.conn.Close()
 }
 
 //
@@ -406,38 +435,38 @@ func encodeLDAPResponse(messageID uint64, responseType uint8, ldapResultCode LDA
 type defaultHandler struct {
 }
 
-func (h defaultHandler) Bind(bindDN, bindSimplePw string, conn net.Conn) (LDAPResultCode, error) {
+func (h defaultHandler) Bind(bindDN, bindSimplePw string, c *Context) (LDAPResultCode, error) {
 	return LDAPResultInvalidCredentials, nil
 }
-func (h defaultHandler) Search(boundDN string, req SearchRequest, conn net.Conn) (ServerSearchResult, error) {
+func (h defaultHandler) Search(boundDN string, req SearchRequest, c *Context) (ServerSearchResult, error) {
 	return ServerSearchResult{make([]*Entry, 0), []string{}, []Control{}, LDAPResultSuccess}, nil
 }
-func (h defaultHandler) Add(boundDN string, req AddRequest, conn net.Conn) (LDAPResultCode, error) {
+func (h defaultHandler) Add(boundDN string, req AddRequest, c *Context) (LDAPResultCode, error) {
 	return LDAPResultInsufficientAccessRights, nil
 }
-func (h defaultHandler) Modify(boundDN string, req ModifyRequest, conn net.Conn) (LDAPResultCode, error) {
+func (h defaultHandler) Modify(boundDN string, req ModifyRequest, c *Context) (LDAPResultCode, error) {
 	return LDAPResultInsufficientAccessRights, nil
 }
-func (h defaultHandler) Delete(boundDN, deleteDN string, conn net.Conn) (LDAPResultCode, error) {
+func (h defaultHandler) Delete(boundDN, deleteDN string, c *Context) (LDAPResultCode, error) {
 	return LDAPResultInsufficientAccessRights, nil
 }
-func (h defaultHandler) ModifyDN(boundDN string, req ModifyDNRequest, conn net.Conn) (LDAPResultCode, error) {
+func (h defaultHandler) ModifyDN(boundDN string, req ModifyDNRequest, c *Context) (LDAPResultCode, error) {
 	return LDAPResultInsufficientAccessRights, nil
 }
-func (h defaultHandler) Compare(boundDN string, req CompareRequest, conn net.Conn) (LDAPResultCode, error) {
+func (h defaultHandler) Compare(boundDN string, req CompareRequest, c *Context) (LDAPResultCode, error) {
 	return LDAPResultInsufficientAccessRights, nil
 }
-func (h defaultHandler) Abandon(boundDN string, conn net.Conn) error {
+func (h defaultHandler) Abandon(boundDN string, c *Context) error {
 	return nil
 }
-func (h defaultHandler) Extended(boundDN string, req ExtendedRequest, conn net.Conn) (LDAPResultCode, error) {
+func (h defaultHandler) Extended(boundDN string, req ExtendedRequest, c *Context) (LDAPResultCode, error) {
 	return LDAPResultProtocolError, nil
 }
-func (h defaultHandler) Unbind(boundDN string, conn net.Conn) (LDAPResultCode, error) {
+func (h defaultHandler) Unbind(boundDN string, c *Context) (LDAPResultCode, error) {
 	return LDAPResultSuccess, nil
 }
-func (h defaultHandler) Close(boundDN string, conn net.Conn) error {
-	conn.Close()
+func (h defaultHandler) Close(boundDN string, c *Context) error {
+	c.conn.Close()
 	return nil
 }
 

@@ -3,7 +3,6 @@ package ldap
 import (
 	"bytes"
 	"log"
-	"net"
 	"os/exec"
 	"strings"
 	"testing"
@@ -192,7 +191,7 @@ func TestBindSSL(t *testing.T) {
 	}()
 
 	go func() {
-		time.Sleep(longerTimeout * 2)
+		time.Sleep(longerTimeout * 20)
 		cmd := exec.Command("ldapsearch", "-H", ldapURLSSL, "-x", "-b", "o=testers,c=test")
 		out, _ := cmd.CombinedOutput()
 		if !strings.Contains(string(out), "result: 0 Success") {
@@ -203,7 +202,7 @@ func TestBindSSL(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(longerTimeout * 2):
+	case <-time.After(longerTimeout * 20):
 		t.Errorf("ldapsearch command timed out")
 	}
 	quit <- true
@@ -294,7 +293,7 @@ func TestSearchStats(t *testing.T) {
 type bindAnonOK struct {
 }
 
-func (b bindAnonOK) Bind(bindDN, bindSimplePw string, conn net.Conn) (LDAPResultCode, error) {
+func (b bindAnonOK) Bind(bindDN, bindSimplePw string, c *Context) (LDAPResultCode, error) {
 	if bindDN == "" && bindSimplePw == "" {
 		return LDAPResultSuccess, nil
 	}
@@ -304,7 +303,7 @@ func (b bindAnonOK) Bind(bindDN, bindSimplePw string, conn net.Conn) (LDAPResult
 type bindSimple struct {
 }
 
-func (b bindSimple) Bind(bindDN, bindSimplePw string, conn net.Conn) (LDAPResultCode, error) {
+func (b bindSimple) Bind(bindDN, bindSimplePw string, c *Context) (LDAPResultCode, error) {
 	if bindDN == "cn=testy,o=testers,c=test" && bindSimplePw == "iLike2test" {
 		return LDAPResultSuccess, nil
 	}
@@ -314,7 +313,7 @@ func (b bindSimple) Bind(bindDN, bindSimplePw string, conn net.Conn) (LDAPResult
 type bindSimple2 struct {
 }
 
-func (b bindSimple2) Bind(bindDN, bindSimplePw string, conn net.Conn) (LDAPResultCode, error) {
+func (b bindSimple2) Bind(bindDN, bindSimplePw string, c *Context) (LDAPResultCode, error) {
 	if bindDN == "cn=testy,o=testers,c=testz" && bindSimplePw == "ZLike2test" {
 		return LDAPResultSuccess, nil
 	}
@@ -324,7 +323,7 @@ func (b bindSimple2) Bind(bindDN, bindSimplePw string, conn net.Conn) (LDAPResul
 type bindPanic struct {
 }
 
-func (b bindPanic) Bind(bindDN, bindSimplePw string, conn net.Conn) (LDAPResultCode, error) {
+func (b bindPanic) Bind(bindDN, bindSimplePw string, c *Context) (LDAPResultCode, error) {
 	panic("test panic at the disco")
 	return LDAPResultInvalidCredentials, nil
 }
@@ -332,7 +331,7 @@ func (b bindPanic) Bind(bindDN, bindSimplePw string, conn net.Conn) (LDAPResultC
 type searchSimple struct {
 }
 
-func (s searchSimple) Search(boundDN string, searchReq SearchRequest, conn net.Conn) (ServerSearchResult, error) {
+func (s searchSimple) Search(boundDN string, searchReq SearchRequest, c *Context) (ServerSearchResult, error) {
 	entries := []*Entry{
 		&Entry{"cn=ned,o=testers,c=test", []*EntryAttribute{
 			&EntryAttribute{"cn", []string{"ned"}},
@@ -367,7 +366,7 @@ func (s searchSimple) Search(boundDN string, searchReq SearchRequest, conn net.C
 type searchSimple2 struct {
 }
 
-func (s searchSimple2) Search(boundDN string, searchReq SearchRequest, conn net.Conn) (ServerSearchResult, error) {
+func (s searchSimple2) Search(boundDN string, searchReq SearchRequest, c *Context) (ServerSearchResult, error) {
 	entries := []*Entry{
 		&Entry{"cn=hamburger,o=testers,c=testz", []*EntryAttribute{
 			&EntryAttribute{"cn", []string{"hamburger"}},
@@ -384,7 +383,7 @@ func (s searchSimple2) Search(boundDN string, searchReq SearchRequest, conn net.
 type searchPanic struct {
 }
 
-func (s searchPanic) Search(boundDN string, searchReq SearchRequest, conn net.Conn) (ServerSearchResult, error) {
+func (s searchPanic) Search(boundDN string, searchReq SearchRequest, c *Context) (ServerSearchResult, error) {
 	entries := []*Entry{}
 	panic("this is a test panic")
 	return ServerSearchResult{entries, []string{}, []Control{}, LDAPResultSuccess}, nil
@@ -393,7 +392,7 @@ func (s searchPanic) Search(boundDN string, searchReq SearchRequest, conn net.Co
 type searchControls struct {
 }
 
-func (s searchControls) Search(boundDN string, searchReq SearchRequest, conn net.Conn) (ServerSearchResult, error) {
+func (s searchControls) Search(boundDN string, searchReq SearchRequest, c *Context) (ServerSearchResult, error) {
 	entries := []*Entry{}
 	if len(searchReq.Controls) == 1 && searchReq.Controls[0].GetControlType() == "1.2.3.4.5" {
 		newEntry := &Entry{"cn=hamburger,o=testers,c=testz", []*EntryAttribute{
